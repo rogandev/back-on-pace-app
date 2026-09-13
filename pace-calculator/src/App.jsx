@@ -1,395 +1,267 @@
-import { useState, useRef } from "react";
+import { useMemo, useState } from "react";
+import "./App.css";
+import { calculatePace, formatSeconds, generateSplits, KM_PER_MILE, parseTimeInput } from "./paceMath";
 
-// Parse flexible time input into total seconds.
-// Separators: colon (:) or dot (.)
-// Rules:
-//   "10"        → 10 min → 600s
-//   "10.15"     → 10 min 15 sec → 615s
-//   "10.15.03"  → 10 hr 15 min 3 sec → 36903s  (three parts = h.m.s)
-//   ".10"       → 0 min 10 sec → 10s
-//   "10:15"     → 10 min 15 sec → 615s
-//   "1:10:15"   → 1 hr 10 min 15 sec → 4215s
-//   "100"       → 100 min → 6000s
-function parseTimeInput(str) {
-  if (!str || !str.trim()) return null;
-  const s = str.trim();
-
-  // Normalize dots to colons
-  const normalized = s.replace(/\./g, ":");
-  const parts = normalized.split(":");
-
-  if (parts.length === 1) {
-    // Plain number → minutes
-    const mins = parseFloat(parts[0]);
-    if (isNaN(mins) || mins < 0) return null;
-    return Math.round(mins * 60);
-  } else if (parts.length === 2) {
-    // mm:ss or :ss
-    const mins = parts[0] === "" ? 0 : parseInt(parts[0], 10);
-    const secs = parts[1] === "" ? 0 : parseInt(parts[1], 10);
-    if (isNaN(mins) || isNaN(secs) || secs >= 60) return null;
-    return mins * 60 + secs;
-  } else if (parts.length === 3) {
-    // hh:mm:ss
-    const hrs = parts[0] === "" ? 0 : parseInt(parts[0], 10);
-    const mins = parts[1] === "" ? 0 : parseInt(parts[1], 10);
-    const secs = parts[2] === "" ? 0 : parseInt(parts[2], 10);
-    if (isNaN(hrs) || isNaN(mins) || isNaN(secs) || mins >= 60 || secs >= 60) return null;
-    return hrs * 3600 + mins * 60 + secs;
-  }
-  return null;
-}
-
-function formatSeconds(totalSecs) {
-  if (totalSecs === null || totalSecs < 0) return "--:--";
-  const hrs = Math.floor(totalSecs / 3600);
-  const mins = Math.floor((totalSecs % 3600) / 60);
-  const secs = Math.round(totalSecs % 60);
-  if (hrs > 0) {
-    return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  }
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-function canonicalizeTime(str) {
-  const secs = parseTimeInput(str);
-  if (secs === null) return str;
-  return formatSeconds(secs);
-}
-
-// Default values (real, not placeholders)
-const DEFAULTS = {
-  distanceDone: "0.25",
-  totalDistance: "1",
-  currentPace: "10:15",
-  goalPace: "9:00",
-};
-
-const inputStyle = {
-  background: "rgba(255,255,255,0.05)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 10,
-  padding: "14px 16px",
-  color: "#e8f0fe",
-  fontSize: 22,
-  fontFamily: "'Space Mono', monospace",
-  fontWeight: 700,
-  width: "100%",
-  boxSizing: "border-box",
-  outline: "none",
-  transition: "border-color 0.2s",
-};
+const RECOVERY_DEFAULTS = { distanceDone: "0.25", totalDistance: "1", currentPace: "10:15", goalPace: "9:00" };
+const RACE_PRESETS = [
+  { label: "5K", kilometers: 5 },
+  { label: "10K", kilometers: 10 },
+  { label: "Half", kilometers: 21.0975 },
+  { label: "Marathon", kilometers: 42.195 },
+];
+const SOLVE_OPTIONS = [
+  { value: "time", label: "Finish time" },
+  { value: "pace", label: "Pace" },
+  { value: "distance", label: "Distance" },
+];
 
 function Field({ label, hint, children }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label style={{ fontSize: 11, fontFamily: "'Space Mono', monospace", letterSpacing: "0.12em", textTransform: "uppercase", color: "#8a9bb0" }}>
-        {label}
-        {hint && <span style={{ color: "#3a5a7a", marginLeft: 6, fontSize: 9, letterSpacing: "0.05em" }}>{hint}</span>}
-      </label>
+    <label className="field">
+      <span className="field-label">{label}{hint && <span className="field-hint">{hint}</span>}</span>
       {children}
-    </div>
+    </label>
   );
 }
 
-export default function App() {
-  const [distanceDone, setDistanceDone] = useState(DEFAULTS.distanceDone);
-  const [totalDistance, setTotalDistance] = useState(DEFAULTS.totalDistance);
-  const [currentPace, setCurrentPace] = useState(DEFAULTS.currentPace);
-  const [goalPace, setGoalPace] = useState(DEFAULTS.goalPace);
+function TimeHint() {
+  return <p className="format-hint">8 → 8:00 &nbsp;·&nbsp; 8.30 → 8:30 &nbsp;·&nbsp; 1:35:00 → 1 hr 35 min</p>;
+}
+
+function Summary({ label, value }) {
+  return <div className="summary-item"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function EmptyResult({ text }) {
+  return <div className="empty-result"><span aria-hidden="true">⏱</span><p>{text}</p></div>;
+}
+
+function RecoveryCalculator() {
+  const [values, setValues] = useState(RECOVERY_DEFAULTS);
   const [calculated, setCalculated] = useState(false);
 
-  const refs = {
-    dist: useRef(null),
-    total: useRef(null),
-    current: useRef(null),
-    goal: useRef(null),
+  const update = (key, value) => {
+    setValues((current) => ({ ...current, [key]: value }));
+    setCalculated(false);
   };
 
-  // Effective values: fall back to defaults if field is empty
-  const effectiveDone = parseFloat(distanceDone || DEFAULTS.distanceDone);
-  const effectiveTotal = parseFloat(totalDistance || DEFAULTS.totalDistance);
-  const effectiveCurrent = parseTimeInput(currentPace || DEFAULTS.currentPace);
-  const effectiveGoal = parseTimeInput(goalPace || DEFAULTS.goalPace);
-
+  const distanceDone = Number(values.distanceDone);
+  const totalDistance = Number(values.totalDistance);
+  const currentPace = parseTimeInput(values.currentPace);
+  const goalPace = parseTimeInput(values.goalPace);
   let result = null;
   let error = null;
 
   if (calculated) {
-    const remaining = effectiveTotal - effectiveDone;
-    if (isNaN(effectiveDone) || isNaN(effectiveTotal)) {
+    const remaining = totalDistance - distanceDone;
+    if (!Number.isFinite(distanceDone) || !Number.isFinite(totalDistance)) {
       error = "Check your distance values.";
-    } else if (remaining <= 0) {
+    } else if (distanceDone < 0 || remaining <= 0) {
       error = "Miles run must be less than total distance.";
-    } else if (effectiveCurrent === null || effectiveGoal === null) {
+    } else if (currentPace === null || goalPace === null || currentPace <= 0 || goalPace <= 0) {
       error = "Check your pace format.";
     } else {
-      const timeSpentSecs = effectiveDone * effectiveCurrent;
-      const totalAllowedSecs = effectiveTotal * effectiveGoal;
-      const timeRemainingNeeded = totalAllowedSecs - timeSpentSecs;
-      if (timeRemainingNeeded <= 0) {
-        error = "Not possible — you've already exceeded your goal time.";
+      const timeSpentSeconds = distanceDone * currentPace;
+      const totalAllowedSeconds = totalDistance * goalPace;
+      const timeRemainingSeconds = totalAllowedSeconds - timeSpentSeconds;
+      if (timeRemainingSeconds <= 0) {
+        error = "Not possible — you’ve already exceeded your goal time.";
       } else {
-        const neededPaceSecs = timeRemainingNeeded / remaining;
-        result = {
-          neededPace: neededPaceSecs,
-          remaining: remaining.toFixed(2),
-          timeSpent: formatSeconds(timeSpentSecs),
-          totalAllowed: formatSeconds(totalAllowedSecs),
-          fasterThanGoal: neededPaceSecs < effectiveGoal,
-        };
+        const neededPace = timeRemainingSeconds / remaining;
+        result = { neededPace, remaining, timeSpentSeconds, totalAllowedSeconds, fasterThanGoal: neededPace < goalPace };
       }
     }
   }
 
-  function resetCalc() { setCalculated(false); }
+  return (
+    <section className="calculator-card" aria-labelledby="page-title">
+      <div className="two-column-fields">
+        <Field label="Miles run so far"><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.distanceDone} onChange={(event) => update("distanceDone", event.target.value)} /></Field>
+        <Field label="Total race miles"><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.totalDistance} onChange={(event) => update("totalDistance", event.target.value)} /></Field>
+        <Field label="Current avg pace"><input className="time-input" type="text" inputMode="decimal" value={values.currentPace} onChange={(event) => update("currentPace", event.target.value)} /></Field>
+        <Field label="Goal pace"><input className="time-input" type="text" inputMode="decimal" value={values.goalPace} onChange={(event) => update("goalPace", event.target.value)} /></Field>
+      </div>
+      <TimeHint />
+      <button className="primary-button" onClick={() => setCalculated(true)}>Find my catch-up pace</button>
 
-  function handleTimeBlur(value, setter, defaultVal) {
-    const val = value.trim() === "" ? defaultVal : value;
-    const canonical = canonicalizeTime(val);
-    setter(canonical);
-  }
+      <div className={`result-panel ${error ? "result-panel-error" : ""}`} aria-live="polite">
+        {!calculated && <EmptyResult text="Your needed pace will appear here" />}
+        {calculated && error && <p className="error-message">{error}</p>}
+        {result && (
+          <div className="result-content">
+            <p className="eyebrow">Run your next {result.remaining.toFixed(2)} mi at</p>
+            <p className={`hero-result ${result.fasterThanGoal ? "hero-result-green" : ""}`}>{formatSeconds(result.neededPace)}</p>
+            <p className="result-unit">per mile</p>
+            <div className="summary-grid">
+              <Summary label="Time banked" value={formatSeconds(result.timeSpentSeconds)} />
+              <Summary label="Total allowed" value={formatSeconds(result.totalAllowedSeconds)} />
+            </div>
+            {result.fasterThanGoal && <p className="recovery-note">↑ Faster than goal — ease into it gradually</p>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
-  function handleDistBlur(value, setter, defaultVal) {
-    if (value.trim() === "") setter(defaultVal);
-  }
+function PaceCalculator() {
+  const [solveFor, setSolveFor] = useState("time");
+  const [unit, setUnit] = useState("mi");
+  const [distance, setDistance] = useState("10");
+  const [time, setTime] = useState("");
+  const [pace, setPace] = useState("8:00");
+  const [result, setResult] = useState(null);
+  const [presetKilometers, setPresetKilometers] = useState(null);
+  const unitName = unit === "mi" ? "mile" : "kilometer";
+  const unitAbbreviation = unit === "mi" ? "mi" : "km";
+  const resultLabel = SOLVE_OPTIONS.find((option) => option.value === solveFor)?.label;
+  const splits = useMemo(() => result && !result.error ? generateSplits(result.distance, result.paceSeconds) : [], [result]);
 
-  function handleKeyDown(e, nextRef) {
-    if (e.key === "Tab" && !e.shiftKey && nextRef) {
-      e.preventDefault();
-      nextRef.current && nextRef.current.focus();
+  const update = (setter) => (event) => {
+    setter(event.target.value);
+    setResult(null);
+  };
+
+  const changeSolveFor = (next) => {
+    setSolveFor(next);
+    if (next === "distance") setPresetKilometers(null);
+    setResult(null);
+  };
+
+  const changeUnit = (nextUnit) => {
+    if (nextUnit === unit) return;
+    const toKilometers = nextUnit === "km";
+    const distanceValue = presetKilometers === null
+      ? Number(distance)
+      : (toKilometers ? presetKilometers : presetKilometers / KM_PER_MILE);
+    const paceValue = parseTimeInput(pace);
+    if (Number.isFinite(distanceValue) && distanceValue > 0) {
+      const convertedDistance = presetKilometers === null
+        ? (toKilometers ? distanceValue * KM_PER_MILE : distanceValue / KM_PER_MILE)
+        : distanceValue;
+      setDistance(convertedDistance.toFixed(2).replace(/\.00$/, ""));
     }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      setCalculated(true);
+    if (paceValue !== null && paceValue > 0) {
+      setPace(formatSeconds(toKilometers ? paceValue / KM_PER_MILE : paceValue * KM_PER_MILE));
     }
-  }
+    setUnit(nextUnit);
+    setResult(null);
+  };
 
-  const resultBorderColor = result
-    ? (result.fasterThanGoal ? "rgba(105,240,174,0.3)" : "rgba(79,195,247,0.3)")
-    : error ? "rgba(255,100,100,0.3)"
-    : "rgba(255,255,255,0.07)";
+  const applyPreset = (kilometers) => {
+    const converted = unit === "km" ? kilometers : kilometers / KM_PER_MILE;
+    setDistance(converted.toFixed(converted < 10 ? 2 : 1).replace(/\.0+$/, ""));
+    setPresetKilometers(kilometers);
+    setResult(null);
+  };
+
+  const updateDistance = (event) => {
+    setDistance(event.target.value);
+    setPresetKilometers(null);
+    setResult(null);
+  };
+
+  const calculate = () => {
+    setResult(calculatePace({
+      solveFor,
+      distance: presetKilometers === null
+        ? Number(distance)
+        : (unit === "km" ? presetKilometers : presetKilometers / KM_PER_MILE),
+      timeSeconds: parseTimeInput(time),
+      paceSeconds: parseTimeInput(pace),
+    }));
+  };
+
+  const reset = () => {
+    setSolveFor("time");
+    setUnit("mi");
+    setDistance("10");
+    setTime("");
+    setPace("8:00");
+    setPresetKilometers(null);
+    setResult(null);
+  };
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0a0f1e; min-height: 100vh; }
-        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; }
-        input[type=number] { -moz-appearance: textfield; }
-        @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-        .calc-btn:active { transform: scale(0.97); }
-      `}</style>
-      <div style={{
-        minHeight: "100vh",
-        background: "linear-gradient(135deg, #0a0f1e 0%, #0d1b2e 50%, #091628 100%)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px 16px",
-        fontFamily: "'Barlow Condensed', sans-serif",
-      }}>
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.25em", color: "#4fc3f7", fontFamily: "'Space Mono', monospace", marginBottom: 10, textTransform: "uppercase" }}>
-            ◈ Race Pace Recovery
-          </div>
-          <h1 style={{ fontSize: 42, fontWeight: 900, color: "#e8f0fe", lineHeight: 1 }}>
-            GET BACK<br /><span style={{ color: "#4fc3f7" }}>ON PACE</span>
-          </h1>
-          <p style={{ marginTop: 10, fontSize: 15, color: "#5a7a9a", fontFamily: "'Space Mono', monospace", letterSpacing: "0.02em" }}>
-            slowed down? find your catch-up pace.
-          </p>
-        </div>
-
-        {/* Card */}
-        <div style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 20,
-          padding: "24px 20px",
-          backdropFilter: "blur(10px)",
-        }}>
-
-          {/* Distance row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <Field label="Miles run so far">
-              <input
-                ref={refs.dist}
-                type="number"
-                step="0.01"
-                min="0"
-                value={distanceDone}
-                onChange={e => { setDistanceDone(e.target.value); resetCalc(); }}
-                onKeyDown={e => handleKeyDown(e, refs.total)}
-                onFocus={e => { e.target.style.borderColor = "#4fc3f7"; e.target.select(); }}
-                onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; handleDistBlur(distanceDone, setDistanceDone, DEFAULTS.distanceDone); }}
-                style={inputStyle}
-              />
-            </Field>
-            <Field label="Total race miles">
-              <input
-                ref={refs.total}
-                type="number"
-                step="0.01"
-                min="0"
-                value={totalDistance}
-                onChange={e => { setTotalDistance(e.target.value); resetCalc(); }}
-                onKeyDown={e => handleKeyDown(e, refs.current)}
-                onFocus={e => { e.target.style.borderColor = "#4fc3f7"; e.target.select(); }}
-                onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; handleDistBlur(totalDistance, setTotalDistance, DEFAULTS.totalDistance); }}
-                style={inputStyle}
-              />
-            </Field>
-          </div>
-
-          {/* Pace row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
-            <Field label="Current avg pace">
-              <input
-                ref={refs.current}
-                type="text"
-                inputMode="decimal"
-                value={currentPace}
-                onChange={e => { setCurrentPace(e.target.value); resetCalc(); }}
-                onKeyDown={e => handleKeyDown(e, refs.goal)}
-                onFocus={e => { e.target.style.borderColor = "#4fc3f7"; e.target.select(); }}
-                onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; handleTimeBlur(currentPace, setCurrentPace, DEFAULTS.currentPace); }}
-                style={inputStyle}
-              />
-            </Field>
-            <Field label="Goal pace">
-              <input
-                ref={refs.goal}
-                type="text"
-                inputMode="decimal"
-                value={goalPace}
-                onChange={e => { setGoalPace(e.target.value); resetCalc(); }}
-                onKeyDown={e => handleKeyDown(e, null)}
-                onFocus={e => { e.target.style.borderColor = "#4fc3f7"; e.target.select(); }}
-                onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; handleTimeBlur(goalPace, setGoalPace, DEFAULTS.goalPace); }}
-                style={inputStyle}
-              />
-            </Field>
-          </div>
-
-          {/* Format hint */}
-          <div style={{ fontSize: 10, color: "#3a5a7a", fontFamily: "'Space Mono', monospace", marginBottom: 18, paddingLeft: 2, lineHeight: 1.7 }}>
-            10 → 10:00 &nbsp;·&nbsp; 10.15 → 10:15 &nbsp;·&nbsp; 10.15.03 → 10:15:03 &nbsp;·&nbsp; .10 → 0:10
-          </div>
-
-          {/* Calculate button */}
-          <button
-            className="calc-btn"
-            onClick={() => setCalculated(true)}
-            style={{
-              width: "100%",
-              padding: "15px",
-              borderRadius: 12,
-              border: "none",
-              background: "linear-gradient(135deg, #4fc3f7 0%, #0288d1 100%)",
-              color: "#fff",
-              fontSize: 17,
-              fontWeight: 700,
-              fontFamily: "'Barlow Condensed', sans-serif",
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              transition: "all 0.2s",
-              marginBottom: 18,
-              boxShadow: "0 4px 20px rgba(79,195,247,0.25)",
-            }}
-          >
-            Calculate
-          </button>
-
-          {/* Divider */}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 18 }} />
-
-          {/* Result box */}
-          <div style={{
-            background: "rgba(255,255,255,0.03)",
-            border: `1px solid ${resultBorderColor}`,
-            borderRadius: 14,
-            padding: "20px 16px",
-            minHeight: 120,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "border-color 0.4s",
-          }}>
-            {!calculated && (
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 30, marginBottom: 8, opacity: 0.2 }}>⏱</div>
-                <div style={{ color: "#3a5a7a", fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                  your needed pace will appear here
-                </div>
-              </div>
-            )}
-
-            {calculated && error && (
-              <div style={{ color: "#ff8a80", fontFamily: "'Space Mono', monospace", fontSize: 13, textAlign: "center", animation: "fadeUp 0.3s ease", lineHeight: 1.6 }}>
-                {error}
-              </div>
-            )}
-
-            {calculated && result && (
-              <div style={{ width: "100%", animation: "fadeUp 0.35s ease" }}>
-                <div style={{ textAlign: "center", marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, letterSpacing: "0.18em", color: "#8a9bb0", fontFamily: "'Space Mono', monospace", textTransform: "uppercase", marginBottom: 8 }}>
-                    Run your next {result.remaining} mi at
-                  </div>
-                  <div style={{
-                    fontSize: 68,
-                    fontWeight: 900,
-                    letterSpacing: "-0.02em",
-                    color: result.fasterThanGoal ? "#69f0ae" : "#4fc3f7",
-                    lineHeight: 1,
-                  }}>
-                    {formatSeconds(result.neededPace)}
-                  </div>
-                  <div style={{ fontSize: 13, color: "#5a7a9a", fontFamily: "'Space Mono', monospace", marginTop: 5 }}>
-                    per mile
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {[
-                    { label: "Time banked", val: result.timeSpent },
-                    { label: "Total allowed", val: result.totalAllowed },
-                  ].map(({ label, val }) => (
-                    <div key={label} style={{
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: 10,
-                      padding: "10px 12px",
-                      textAlign: "center",
-                    }}>
-                      <div style={{ fontSize: 10, color: "#5a7a9a", fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 3 }}>{label}</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: "#b0c4de", fontFamily: "'Space Mono', monospace" }}>{val}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {result.fasterThanGoal && (
-                  <div style={{ marginTop: 12, fontSize: 12, color: "#69f0ae", fontFamily: "'Space Mono', monospace", textAlign: "center", opacity: 0.85 }}>
-                    ↑ faster than goal — ease into it gradually
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 20, fontSize: 11, color: "#2a4060", fontFamily: "'Space Mono', monospace", letterSpacing: "0.08em" }}>
-          no math. just run.
+    <section className="calculator-card pace-card" aria-labelledby="page-title">
+      <div className="section-heading">
+        <p className="eyebrow">Choose what you want to find</p>
+        <div className="segmented-control" role="group" aria-label="Solve for">
+          {SOLVE_OPTIONS.map((option) => <button key={option.value} className={solveFor === option.value ? "active" : ""} onClick={() => changeSolveFor(option.value)}>{option.label}</button>)}
         </div>
       </div>
-    </>
+
+      <div className="unit-row">
+        <span className="field-label">Units</span>
+        <div className="unit-toggle" role="group" aria-label="Distance unit">
+          <button className={unit === "mi" ? "active" : ""} onClick={() => changeUnit("mi")}>Miles</button>
+          <button className={unit === "km" ? "active" : ""} onClick={() => changeUnit("km")}>Kilometers</button>
+        </div>
+      </div>
+
+      <div className="preset-row" aria-label="Race distance presets">
+        {RACE_PRESETS.map((preset) => <button key={preset.label} disabled={solveFor === "distance"} onClick={() => applyPreset(preset.kilometers)}>{preset.label}</button>)}
+      </div>
+
+      <div className="calculator-fields">
+        <Field label="Distance" hint={unitAbbreviation}><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={solveFor === "distance" ? "" : distance} disabled={solveFor === "distance"} placeholder={solveFor === "distance" ? "Calculated" : "10"} onChange={updateDistance} /></Field>
+        <Field label="Finish time" hint="h:mm:ss"><input className="time-input" type="text" inputMode="decimal" value={solveFor === "time" ? "" : time} disabled={solveFor === "time"} placeholder={solveFor === "time" ? "Calculated" : "1:20:00"} onChange={update(setTime)} /></Field>
+        <Field label="Pace" hint={`per ${unitName}`}><input className="time-input" type="text" inputMode="decimal" value={solveFor === "pace" ? "" : pace} disabled={solveFor === "pace"} placeholder={solveFor === "pace" ? "Calculated" : "8:00"} onChange={update(setPace)} /></Field>
+      </div>
+      <TimeHint />
+
+      <div className="button-row">
+        <button className="primary-button" onClick={calculate}>Calculate {resultLabel}</button>
+        <button className="secondary-button" onClick={reset}>Reset</button>
+      </div>
+
+      <div className={`result-panel pace-result-panel ${result?.error ? "result-panel-error" : ""}`} aria-live="polite">
+        {!result && <EmptyResult text="Your result and splits will appear here" />}
+        {result?.error && <p className="error-message">{result.error}</p>}
+        {result && !result.error && (
+          <div className="result-content">
+            <p className="eyebrow">{resultLabel}</p>
+            <p className="hero-result">{solveFor === "distance" ? result.distance.toFixed(2).replace(/\.00$/, "") : formatSeconds(solveFor === "time" ? result.timeSeconds : result.paceSeconds)}</p>
+            <p className="result-unit">{solveFor === "distance" ? unitAbbreviation : solveFor === "pace" ? `per ${unitName}` : `${result.distance.toFixed(2).replace(/\.00$/, "")} ${unitAbbreviation}`}</p>
+            <div className="summary-grid three-columns">
+              <Summary label="Distance" value={`${result.distance.toFixed(2).replace(/\.00$/, "")} ${unitAbbreviation}`} />
+              <Summary label="Finish" value={formatSeconds(result.timeSeconds)} />
+              <Summary label="Pace" value={`${formatSeconds(result.paceSeconds)}/${unitAbbreviation}`} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {splits.length > 0 && (
+        <div className="splits-section">
+          <div className="splits-heading"><div><p className="eyebrow">Even splits</p><h2>Every {unitName}</h2></div><span>{splits.length} splits</span></div>
+          <div className="splits-table-wrap">
+            <table className="splits-table">
+              <thead><tr><th>{unitAbbreviation}</th><th>Split</th><th>Elapsed</th></tr></thead>
+              <tbody>{splits.map((split) => <tr key={split.marker}><td>{split.marker.toFixed(split.segmentDistance < 1 ? 2 : 0)}</td><td>{formatSeconds(split.splitSeconds)}</td><td>{formatSeconds(split.elapsedSeconds)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState("recovery");
+  return (
+    <main className="app-shell">
+      <header className="app-header">
+        <p className="brand-kicker">◈ Race pace tools</p>
+        <h1 id="page-title">{activeTab === "recovery" ? <>GET BACK<br /><span>ON PACE</span></> : <>PACE<br /><span>CALCULATOR</span></>}</h1>
+        <p>{activeTab === "recovery" ? "Slowed down? Find your catch-up pace." : "Plan your pace, finish time, and splits."}</p>
+      </header>
+      <nav className="tool-tabs" aria-label="Pace tools">
+        <button className={activeTab === "recovery" ? "active" : ""} onClick={() => setActiveTab("recovery")}>Back on Pace</button>
+        <button className={activeTab === "calculator" ? "active" : ""} onClick={() => setActiveTab("calculator")}>Pace Calculator</button>
+      </nav>
+      {activeTab === "recovery" ? <RecoveryCalculator /> : <PaceCalculator />}
+      <footer>No math. Just run.</footer>
+    </main>
   );
 }

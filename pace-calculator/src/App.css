@@ -100,3 +100,13 @@ footer { margin-top: 18px; color: #334f6b; font-size: 9px; letter-spacing: .1em;
   .preset-row button { font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.time-field { margin: 0; padding: 0; border: 0; }
+.time-field legend { margin-bottom: 7px; padding: 0; }
+.time-parts { display: flex; gap: 6px; }
+.time-part { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.time-part > span { color: #8a9bb0; font-family: "Space Mono", monospace; font-size: 10px; }
+.time-part .time-input { padding-inline: 7px; text-align: center; }
+.time-calculated { display: flex; align-items: center; min-height: 70px; color: #607c96; font-family: "Space Mono", monospace; font-size: 14px; }
+.calculator-fields { grid-template-columns: 1fr; }
+.calculator-fields .field:first-child { grid-column: auto; }

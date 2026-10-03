@@ -44,8 +44,44 @@ function Field({ label, hint, children }) {
   );
 }
 
+function TimeField({ label, hint, value, onChange, disabled = false, includeHours = false }) {
+  const units = includeHours ? ["hours", "minutes", "seconds"] : ["minutes", "seconds"];
+  const rawParts = value ? value.split(":") : [];
+  const parts = includeHours && rawParts.length === 2
+    ? ["0", ...rawParts]
+    : !includeHours && rawParts.length === 3
+      ? [String(Number(rawParts[0]) * 60 + Number(rawParts[1])), rawParts[2]]
+      : rawParts;
+
+  const updatePart = (index, nextValue) => {
+    if (!/^\d*$/.test(nextValue)) return;
+    const next = units.map((_, i) => parts[i] ?? "");
+    next[index] = nextValue;
+    onChange({ target: { value: next.join(":") } });
+  };
+
+  return (
+    <fieldset className="field time-field" disabled={disabled}>
+      <legend className="field-label">{label}{hint && <span className="field-hint">{hint}</span>}</legend>
+      {disabled ? <div className="time-calculated">Calculated</div> : (
+        <div className="time-parts">
+          {units.map((unit, index) => (
+            <label className="time-part" key={unit}>
+              <span>{unit === "hours" ? "hr" : unit === "minutes" ? "min" : "sec"}</span>
+              <CalculatorInput className="time-input" type="text" inputMode="numeric"
+                aria-label={`${label} ${unit}`} placeholder="00"
+                maxLength={unit === "seconds" || (includeHours && unit === "minutes") ? 2 : undefined}
+                value={parts[index] ?? ""} onChange={(event) => updatePart(index, event.target.value)} />
+            </label>
+          ))}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 function TimeHint() {
-  return <p className="format-hint">8 → 8:00 &nbsp;·&nbsp; 8.30 → 8:30 &nbsp;·&nbsp; 1:35:00 → 1 hr 35 min</p>;
+  return <p className="format-hint">Enter minutes and seconds separately. For 8:50, enter 8 min and 50 sec.</p>;
 }
 
 function Summary({ label, value }) {
@@ -98,8 +134,8 @@ function RecoveryCalculator() {
       <div className="two-column-fields">
         <Field label="Miles run so far"><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.distanceDone} onChange={(event) => update("distanceDone", event.target.value)} /></Field>
         <Field label="Total race miles"><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.totalDistance} onChange={(event) => update("totalDistance", event.target.value)} /></Field>
-        <Field label="Current avg pace"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={values.currentPace} onChange={(event) => update("currentPace", event.target.value)} /></Field>
-        <Field label="Goal pace"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={values.goalPace} onChange={(event) => update("goalPace", event.target.value)} /></Field>
+        <TimeField label="Current avg pace" value={values.currentPace} onChange={(event) => update("currentPace", event.target.value)} />
+        <TimeField label="Goal pace" value={values.goalPace} onChange={(event) => update("goalPace", event.target.value)} />
       </div>
       <TimeHint />
       <button className="primary-button" onClick={() => setCalculated(true)}>Find my catch-up pace</button>
@@ -225,8 +261,8 @@ function PaceCalculator() {
 
       <div className="calculator-fields">
         <Field label="Distance" hint={unitAbbreviation}><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={solveFor === "distance" ? "" : distance} disabled={solveFor === "distance"} placeholder={solveFor === "distance" ? "Calculated" : "10"} onChange={updateDistance} /></Field>
-        <Field label="Finish time" hint="h:mm:ss"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={solveFor === "time" ? "" : time} disabled={solveFor === "time"} placeholder={solveFor === "time" ? "Calculated" : "1:20:00"} onChange={update(setTime)} /></Field>
-        <Field label="Pace" hint={`per ${unitName}`}><CalculatorInput className="time-input" type="text" inputMode="decimal" value={solveFor === "pace" ? "" : pace} disabled={solveFor === "pace"} placeholder={solveFor === "pace" ? "Calculated" : "8:00"} onChange={update(setPace)} /></Field>
+        <TimeField label="Finish time" includeHours value={solveFor === "time" ? "" : time} disabled={solveFor === "time"} onChange={update(setTime)} />
+        <TimeField label="Pace" hint={`per ${unitName}`} value={solveFor === "pace" ? "" : pace} disabled={solveFor === "pace"} onChange={update(setPace)} />
       </div>
       <TimeHint />
 

@@ -88,10 +88,12 @@ input[type="number"] { -moz-appearance: textfield; }
 footer { margin-top: 18px; color: #334f6b; font-size: 9px; letter-spacing: .1em; text-align: center; text-transform: uppercase; }
 
 @keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 390px) {
-  .calculator-card { padding: 17px 14px; }
+@media (max-width: 480px) {
   .calculator-fields { grid-template-columns: 1fr 1fr; }
   .calculator-fields .field:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 390px) {
+  .calculator-card { padding: 17px 14px; }
   .summary-grid.three-columns { gap: 5px; }
   .summary-item strong { font-size: 10px; }
   .preset-row { gap: 4px; }

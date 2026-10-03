@@ -1,16 +1,41 @@
-# React + Vite
+# Get Back on Pace
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite race pace tools with a Capacitor iOS wrapper. Both calculators run locally; Google Fonts requires a network connection, with system font fallbacks offline.
 
-Currently, two official plugins are available:
+## Web development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Use Node.js 24 LTS and npm:
 
-## React Compiler
+```sh
+npm ci
+npm test
+npm run lint
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## iPhone simulator
 
-## Expanding the Oxlint configuration
+Requires Xcode with an installed iOS simulator runtime and its license accepted.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```sh
+npm run ios:sync
+npm run ios:open
+```
+
+In Xcode, select the **App** scheme and an iPhone simulator, then Run. No paid developer enrollment or real-device signing is needed. Alternatively, `npm run ios:run` builds, syncs, and offers a simulator target.
+
+Always run `npm run ios:sync` after web changes: the native app loads bundled `dist` assets, not a development server. Commit `ios/` and `capacitor.config.json`; generated web assets and native caches are ignored.
+
+Local bundle ID: `com.rogandev.backonpace`. This does not register an App Store identifier. Icons and launch artwork remain Capacitor defaults pending production branding.
+
+## First Mac build
+
+The first build used official Node.js 24.21.0 extracted under `/tmp/node-v24.21.0-darwin-arm64`, without changing system configuration. Until Node is installed separately, prefix commands with:
+
+```sh
+export PATH=/tmp/node-v24.21.0-darwin-arm64/bin:$PATH
+```
+
+That temporary runtime may disappear after a restart or cleanup.
+
+Production dependencies have no reported npm audit advisories. Three moderate development-only findings remain in Capacitor CLI's xcode/uuid dependency chain; npm's proposed forced downgrade was not applied.

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import "./App.css";
 import { calculatePace, formatSeconds, generateSplits, KM_PER_MILE, parseTimeInput } from "./paceMath";
 
@@ -14,6 +14,26 @@ const SOLVE_OPTIONS = [
   { value: "pace", label: "Pace" },
   { value: "distance", label: "Distance" },
 ];
+
+function CalculatorInput(props) {
+  const selectOnFirstClick = useRef(false);
+
+  return <input {...props}
+    onFocus={(event) => {
+      selectOnFirstClick.current = true;
+      event.currentTarget.select();
+    }}
+    onClick={(event) => {
+      // iOS places the caret after focus; select again after the initial tap.
+      // Later taps retain normal caret placement.
+      if (selectOnFirstClick.current) {
+        event.currentTarget.select();
+        selectOnFirstClick.current = false;
+      }
+    }}
+    onBlur={() => { selectOnFirstClick.current = false; }}
+  />;
+}
 
 function Field({ label, hint, children }) {
   return (
@@ -76,10 +96,10 @@ function RecoveryCalculator() {
   return (
     <section className="calculator-card" aria-labelledby="page-title">
       <div className="two-column-fields">
-        <Field label="Miles run so far"><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.distanceDone} onChange={(event) => update("distanceDone", event.target.value)} /></Field>
-        <Field label="Total race miles"><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.totalDistance} onChange={(event) => update("totalDistance", event.target.value)} /></Field>
-        <Field label="Current avg pace"><input className="time-input" type="text" inputMode="decimal" value={values.currentPace} onChange={(event) => update("currentPace", event.target.value)} /></Field>
-        <Field label="Goal pace"><input className="time-input" type="text" inputMode="decimal" value={values.goalPace} onChange={(event) => update("goalPace", event.target.value)} /></Field>
+        <Field label="Miles run so far"><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.distanceDone} onChange={(event) => update("distanceDone", event.target.value)} /></Field>
+        <Field label="Total race miles"><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={values.totalDistance} onChange={(event) => update("totalDistance", event.target.value)} /></Field>
+        <Field label="Current avg pace"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={values.currentPace} onChange={(event) => update("currentPace", event.target.value)} /></Field>
+        <Field label="Goal pace"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={values.goalPace} onChange={(event) => update("goalPace", event.target.value)} /></Field>
       </div>
       <TimeHint />
       <button className="primary-button" onClick={() => setCalculated(true)}>Find my catch-up pace</button>
@@ -204,9 +224,9 @@ function PaceCalculator() {
       </div>
 
       <div className="calculator-fields">
-        <Field label="Distance" hint={unitAbbreviation}><input className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={solveFor === "distance" ? "" : distance} disabled={solveFor === "distance"} placeholder={solveFor === "distance" ? "Calculated" : "10"} onChange={updateDistance} /></Field>
-        <Field label="Finish time" hint="h:mm:ss"><input className="time-input" type="text" inputMode="decimal" value={solveFor === "time" ? "" : time} disabled={solveFor === "time"} placeholder={solveFor === "time" ? "Calculated" : "1:20:00"} onChange={update(setTime)} /></Field>
-        <Field label="Pace" hint={`per ${unitName}`}><input className="time-input" type="text" inputMode="decimal" value={solveFor === "pace" ? "" : pace} disabled={solveFor === "pace"} placeholder={solveFor === "pace" ? "Calculated" : "8:00"} onChange={update(setPace)} /></Field>
+        <Field label="Distance" hint={unitAbbreviation}><CalculatorInput className="number-input" type="number" inputMode="decimal" min="0" step="0.01" value={solveFor === "distance" ? "" : distance} disabled={solveFor === "distance"} placeholder={solveFor === "distance" ? "Calculated" : "10"} onChange={updateDistance} /></Field>
+        <Field label="Finish time" hint="h:mm:ss"><CalculatorInput className="time-input" type="text" inputMode="decimal" value={solveFor === "time" ? "" : time} disabled={solveFor === "time"} placeholder={solveFor === "time" ? "Calculated" : "1:20:00"} onChange={update(setTime)} /></Field>
+        <Field label="Pace" hint={`per ${unitName}`}><CalculatorInput className="time-input" type="text" inputMode="decimal" value={solveFor === "pace" ? "" : pace} disabled={solveFor === "pace"} placeholder={solveFor === "pace" ? "Calculated" : "8:00"} onChange={update(setPace)} /></Field>
       </div>
       <TimeHint />
 

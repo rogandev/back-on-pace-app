@@ -2,13 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import "./App.css";
 import { calculatePace, formatSeconds, generateSplits, KM_PER_MILE, parseTimeInput } from "./paceMath";
 
+import { RACE_PRESETS, matchingPresetKilometers } from "./distancePresets";
+
 const RECOVERY_DEFAULTS = { distanceDone: "0.25", totalDistance: "1", currentPace: "10:15", goalPace: "9:00" };
-const RACE_PRESETS = [
-  { label: "5K", kilometers: 5 },
-  { label: "10K", kilometers: 10 },
-  { label: "Half", kilometers: 21.0975 },
-  { label: "Marathon", kilometers: 42.195 },
-];
 const SOLVE_OPTIONS = [
   { value: "time", label: "Finish time" },
   { value: "pace", label: "Pace" },
@@ -168,6 +164,9 @@ function PaceCalculator() {
   const [pace, setPace] = useState("8:00");
   const [result, setResult] = useState(null);
   const [presetKilometers, setPresetKilometers] = useState(null);
+  const selectedPreset = solveFor === "distance"
+    ? null
+    : presetKilometers;
   const unitName = unit === "mi" ? "mile" : "kilometer";
   const unitAbbreviation = unit === "mi" ? "mi" : "km";
   const resultLabel = SOLVE_OPTIONS.find((option) => option.value === solveFor)?.label;
@@ -213,7 +212,7 @@ function PaceCalculator() {
 
   const updateDistance = (event) => {
     setDistance(event.target.value);
-    setPresetKilometers(null);
+    setPresetKilometers(matchingPresetKilometers(event.target.value, unit));
     setResult(null);
   };
 
@@ -255,8 +254,11 @@ function PaceCalculator() {
         </div>
       </div>
 
-      <div className="preset-row" aria-label="Race distance presets">
-        {RACE_PRESETS.map((preset) => <button key={preset.label} disabled={solveFor === "distance"} onClick={() => applyPreset(preset.kilometers)}>{preset.label}</button>)}
+      <div className="preset-row" role="group" aria-label="Race distance presets">
+        {RACE_PRESETS.map((preset) => <button key={preset.label}
+          aria-pressed={selectedPreset === preset.kilometers}
+          disabled={solveFor === "distance"}
+          onClick={() => applyPreset(preset.kilometers)}>{preset.label}</button>)}
       </div>
 
       <div className="calculator-fields">
